@@ -1,155 +1,246 @@
+
+%%writefile app.py
+
 import streamlit as st
 import pandas as pd
+import seaborn as sns
+import plotly.express as px
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.stats import shapiro, chi2
+from scipy.spatial.distance import mahalanobis
 
+# KONFIGURASI HALAMAN
 st.set_page_config(
-    page_title="Dashboard Multivariat",
+    page_title="Iris Dashboard",
     page_icon="📊",
     layout="wide"
 )
 
-st.title("Dashboard Analisis Data Multivariat")
+# JUDUL DASHBOARD
+st.title("My Iris Dataset Dashboard 🌺")
 st.write(
-    "Eksplorasi data, visualisasi, uji normalitas, "
-    "dan deteksi outlier."
+    """
+    Dashboard untuk mengeksplorasi data Iris,
+    menguji normalitas setiap variabel numerik,
+    dan mendeteksi outlier multivariat.
+    """
 )
+st.divider()
 
-file = st.file_uploader(
-    "Unggah data hasil analisis R (CSV)",
-    type=["csv"]
-)
+# MEMUAT DATASET
+@st.cache_data
+def load_data():
+    return sns.load_dataset("iris")
 
-if file is not None:
-    df = pd.read_csv(file)
-elif __import__("os").path.exists("data_multivariat.csv"):
-    df = pd.read_csv("data_multivariat.csv")
-else:
-    st.info("Unggah file CSV untuk memulai analisis.")
-    st.stop()
+df = load_data()
 
-num = df.select_dtypes(include=np.number)
+attributes = df.columns[:-1].tolist()
+species = df["species"].unique().tolist()
 
-st.subheader("1. Ringkasan Data")
-c1, c2, c3 = st.columns(3)
-c1.metric("Jumlah baris", df.shape[0])
-c2.metric("Jumlah kolom", df.shape[1])
-c3.metric("Data kosong", int(df.isna().sum().sum()))
-
-st.dataframe(df, use_container_width=True)
-
-st.subheader("2. Statistik Deskriptif")
-st.dataframe(num.describe().T, use_container_width=True)
-
-if num.shape[1] >= 2:
-    st.subheader("3. Visualisasi Multivariat")
-
-    x = st.selectbox("Variabel X", num.columns, index=0)
-    y = st.selectbox(
-        "Variabel Y",
-        num.columns,
-        index=1
+# INFORMASI DATASET
+with st.expander("About the Iris Dataset"):
+    st.write(
+        """
+        Dataset Iris terdiri dari 150 observasi,
+        empat variabel numerik, dan tiga spesies:
+        Setosa, Versicolor, dan Virginica.
+        """
     )
 
-    plotdata = num[[x, y]].dropna()
+# SIDEBAR
+with st.sidebar:
+    st.header("Filters")
+    selected_attribute = st.selectbox(
+        "Select Attribute:", attributes, index=0
+    )
+    selected_species = st.multiselect(
+        "Select Species:",
+        species,
+        default=species
+    )
 
-    fig, ax = plt.subplots()
-    ax.scatter(plotdata[x], plotdata[y])
-    ax.set_xlabel(x)
-    ax.set_ylabel(y)
-    ax.set_title(f"Hubungan {x} dan {y}")
-    ax.grid(alpha=0.3)
-    st.pyplot(fig)
-    plt.close(fig)
+filtered_df = df[df["species"].isin(selected_species)]
 
-    st.subheader("4. Matriks Korelasi")
-    corr = num.corr()
+# STATISTIK DESKRIPTIF
+st.header("Basic Statistics")
+st.dataframe(
+    filtered_df[attributes].describe(),
+    use_container_width=True
+)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    im = ax.imshow(corr, vmin=-1, vmax=1, cmap="coolwarm")
-    ax.set_xticks(range(len(corr.columns)))
-    ax.set_xticklabels(corr.columns, rotation=90)
-    ax.set_yticks(range(len(corr.columns)))
-    ax.set_yticklabels(corr.columns)
-    fig.colorbar(im, ax=ax)
-    fig.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
+# FUNGSI VISUALISASI
+def create_pairplot(data, attributes):
+    fig = px.scatter_matrix(
+        data,
+        dimensions=attributes,
+        color="species",
+        opacity=0.6,
+        title="Pairwise Scatter Plot"
+    )
+    fig.update_traces(diagonal_visible=False)
+    fig.update_layout(height=750)
+    return fig
 
-st.subheader("5. Uji Normalitas Tiap Variabel")
-hasil = []
+def create_histogram(data, attribute):
+    fig = px.histogram(
+        data,
+        x=attribute,
+        color="species",
+        marginal="box",
+        barmode="overlay",
+        opacity=0.7,
+        title=f"Histogram of {attribute}"
+    )
+    fig.update_layout(hovermode="x unified")
+    return fig
 
-for kolom in num.columns:
-    nilai = num[kolom].dropna()
+def create_violin_plot(data, attribute, show_points=True):
+    points = "all" if show_points else False
+    return px.violin(
+        data,
+        x="species",
+        y=attribute,
+        color="species",
+        box=True,
+        points=points,
+        title=f"Violin Plot of {attribute}"
+    )
 
-    if 3 <= len(nilai) <= 5000 and nilai.nunique() > 1:
-        stat, p = shapiro(nilai)
-        hasil.append({
-            "Variabel": kolom,
-            "Statistik": stat,
-            "P-value": p,
-            "Kesimpulan": (
-                "Tidak menolak normalitas"
-                if p > 0.05
-                else "Tidak berdistribusi normal"
-            )
-        })
+# VISUALISASI DATA
+st.header("Data Visualization")
+st.subheader("Pairwise Scatter Plot (All Attributes)")
 
-if hasil:
-    st.dataframe(pd.DataFrame(hasil), use_container_width=True)
+if filtered_df.empty:
+    st.warning("Pilih minimal satu spesies pada sidebar.")
 else:
-    st.write("Data tidak memenuhi syarat uji Shapiro-Wilk.")
+    st.plotly_chart(
+        create_pairplot(filtered_df, attributes),
+        use_container_width=True
+    )
 
-st.subheader("6. Deteksi Outlier Multivariat")
+st.subheader("Single Attribute Distribution")
 
-bersih = num.replace(
-    [np.inf, -np.inf], np.nan
-).dropna()
+if not filtered_df.empty:
+    col1, col2 = st.columns(2)
 
-if bersih.shape[1] >= 2 and len(bersih) > bersih.shape[1]:
-    try:
-        pusat = bersih.mean().to_numpy()
-        kov = np.cov(bersih.to_numpy(), rowvar=False)
-        inv_kov = np.linalg.pinv(kov)
-
-        selisih = bersih.to_numpy() - pusat
-        jarak = np.einsum(
-            "ij,jk,ik->i", selisih, inv_kov, selisih
-        )
-
-        batas = chi2.ppf(0.95, df=bersih.shape[1])
-
-        outlier = bersih.copy()
-        outlier["Jarak_Mahalanobis"] = jarak
-        outlier["Status"] = np.where(
-            jarak > batas, "Outlier", "Bukan Outlier"
-        )
-
-        st.write(f"Batas jarak Mahalanobis: {batas:.3f}")
-        st.dataframe(
-            outlier[outlier["Status"] == "Outlier"],
+    with col1:
+        st.plotly_chart(
+            create_histogram(filtered_df, selected_attribute),
             use_container_width=True
         )
 
-        fig, ax = plt.subplots()
-        ax.scatter(range(1, len(jarak) + 1), jarak)
-        ax.axhline(batas, color="red", linestyle="--")
-        ax.set_xlabel("Nomor Pengamatan")
-        ax.set_ylabel("Jarak Mahalanobis")
-        ax.set_title("Deteksi Outlier")
-        st.pyplot(fig)
-        plt.close(fig)
+    with col2:
+        show_points = st.checkbox(
+            "Show individual points", value=True
+        )
+        st.plotly_chart(
+            create_violin_plot(
+                filtered_df, selected_attribute, show_points
+            ),
+            use_container_width=True
+        )
 
-    except (ValueError, np.linalg.LinAlgError):
-        st.warning("Outlier tidak dapat dihitung dari data ini.")
+# UJI NORMALITAS UNIVARIAT
+st.divider()
+st.header("Normality Test (Shapiro-Wilk)")
+st.write(
+    "Uji normalitas dilakukan pada setiap variabel numerik "
+    "untuk data yang sudah difilter."
+)
+
+if len(filtered_df) >= 3:
+    normality_results = []
+
+    for col in attributes:
+        stat, p_value = shapiro(filtered_df[col])
+        normality_results.append({
+            "Variabel": col,
+            "Statistik W": stat,
+            "P-value": p_value,
+            "Kesimpulan": (
+                "Tidak menolak normalitas"
+                if p_value >= 0.05
+                else "Indikasi tidak normal"
+            )
+        })
+
+    st.dataframe(
+        pd.DataFrame(normality_results),
+        use_container_width=True
+    )
+    st.caption(
+        "Interpretasi pada taraf 5%: p-value ≥ 0,05 "
+        "berarti tidak cukup bukti untuk menyatakan data "
+        "menyimpang dari normalitas."
+    )
 else:
-    st.info("Diperlukan minimal dua variabel numerik.")
+    st.warning("Diperlukan minimal 3 observasi untuk uji Shapiro-Wilk.")
 
-st.subheader("7. Unduh Data")
-st.download_button(
-    "Unduh hasil data CSV",
-    data=df.to_csv(index=False).encode("utf-8"),
-    file_name="data_dashboard.csv",
+# DETEKSI OUTLIER MULTIVARIAT
+st.divider()
+st.header("Multivariate Outlier Detection")
+st.write(
+    "Outlier dideteksi menggunakan jarak Mahalanobis "
+    "berdasarkan empat variabel numerik."
+)
+
+if len(filtered_df) > len(attributes) + 1:
+    X = filtered_df[attributes].to_numpy(dtype=float)
+    mean_vector = np.mean(X, axis=0)
+    cov_matrix = np.cov(X, rowvar=False)
+
+    try:
+        inv_cov = np.linalg.pinv(cov_matrix)
+        distances = np.array([
+            mahalanobis(x, mean_vector, inv_cov) ** 2
+            for x in X
+        ])
+
+        cutoff = chi2.ppf(0.975, df=len(attributes))
+        outlier_mask = distances > cutoff
+
+        outlier_df = filtered_df.copy()
+        outlier_df["Mahalanobis_D2"] = distances
+        outlier_df["Status"] = np.where(
+            outlier_mask, "Outlier", "Bukan outlier"
+        )
+
+        col1, col2 = st.columns(2)
+        col1.metric("Jumlah observasi dianalisis", len(X))
+        col2.metric("Jumlah kandidat outlier", int(outlier_mask.sum()))
+
+        st.write(
+            f"Batas Mahalanobis D² pada taraf 5% "
+            f"(kuantil 97,5% chi-kuadrat, df=4): {cutoff:.3f}"
+        )
+        st.dataframe(
+            outlier_df[outlier_df["Status"] == "Outlier"],
+            use_container_width=True
+        )
+        with st.expander("Lihat seluruh hasil deteksi"):
+            st.dataframe(outlier_df, use_container_width=True)
+
+        st.caption(
+            "Hasil ini merupakan kandidat outlier. "
+            "Interpretasikan dengan memperhatikan spesies dan "
+            "karakteristik data; asumsi distribusi perlu diperiksa."
+        )
+    except (ValueError, np.linalg.LinAlgError):
+        st.error("Jarak Mahalanobis tidak dapat dihitung pada data terpilih.")
+else:
+    st.warning(
+        "Pilih spesies dengan jumlah observasi yang cukup "
+        "untuk mendeteksi outlier."
+    )
+
+# TABEL DATA
+with st.expander("View Dataset"):
+    st.dataframe(filtered_df, use_container_width=True)
+
+st.divider()
+st.caption(
+    "Praktikum Eksplorasi dan Visualisasi Data Multivariat"
+)
+
     mime="text/csv"
 )
